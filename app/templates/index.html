@@ -6,6 +6,8 @@
     仅接受<b>未压缩传输语法</b>的 DICOM 文件，可多选批量上传。处理规则：
     清空 PatientName、替换 PatientID；Study/Series/SOP 三类 UID 及全部嵌套引用统一换号；
     SOP Class UID、Transfer Syntax UID、像素数据保持原样。同 UID 字节冲突将整批拒绝。
+    需要确认某个 Study 是否具备完整协议影像时，请使用
+    <a href="{{ url_for('verify_page') }}">Study 完整性核查</a>。
   </p>
   <form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data">
     <p><input type="file" name="dicom_files" webkitdirectory multiple required></p>

@@ -11,6 +11,7 @@ services:
       DICOM_DATA_DIR: "/data"
       MAX_CONTENT_LENGTH: "2147483648"
       SQLITE_BUSY_TIMEOUT_MS: "30000"
+      DICOM_VERIFY_MAX_INSTANCES: "20000"
       FLASK_SECRET_KEY: "change-this-in-production"
     volumes:
       - dicom_data:/data

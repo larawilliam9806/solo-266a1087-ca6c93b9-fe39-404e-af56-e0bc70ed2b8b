@@ -15,8 +15,19 @@ from flask import (
     url_for,
 )
 
-from . import config, services
+from . import config, services, verification
 from .db import get_db, init_db, recover_interrupted_batches
+
+
+def _posted_requirements(request) -> list[dict]:
+    """回填校验失败时的表单行，避免用户重填。"""
+    rows = []
+    for uid, minimum in zip(
+        request.form.getlist("sop_class_uid"),
+        request.form.getlist("minimum_instances"),
+    ):
+        rows.append({"sop_class_uid": uid, "minimum": minimum})
+    return rows
 
 
 def create_app() -> Flask:
@@ -90,6 +101,64 @@ def create_app() -> Flask:
     @app.get("/healthz")
     def healthz():
         return {"status": "ok"}
+
+    # ------------------------------------------------------------ 完整性核查
+    @app.get("/verify")
+    def verify_page():
+        return render_template(
+            "verify.html",
+            studies=verification.list_study_options(),
+            requirements=[],
+            selected_study="",
+            verifications=verification.list_verifications(limit=20),
+            issue_labels=verification.ISSUE_LABELS,
+        )
+
+    @app.post("/verify")
+    def verify_submit():
+        try:
+            study_uid, patient_id = verification.parse_study_pair(
+                request.form.get("study_pair", "")
+            )
+            requirements = verification.parse_requirements(
+                request.form.getlist("sop_class_uid"),
+                request.form.getlist("minimum_instances"),
+            )
+            result = verification.run_verification(
+                study_uid, patient_id, requirements
+            )
+        except verification.VerificationError as exc:
+            flash(str(exc), "error")
+            return render_template(
+                "verify.html",
+                studies=verification.list_study_options(),
+                requirements=_posted_requirements(request),
+                selected_study=request.form.get("study_pair", ""),
+                verifications=verification.list_verifications(limit=20),
+                issue_labels=verification.ISSUE_LABELS,
+            ), 400
+
+        verification_id = verification.save_verification(result)
+        flash(
+            "核查完成："
+            + ("影像完整，可用于研究" if result["status"] == "usable"
+               else "影像不完整，不可用"),
+            "ok" if result["status"] == "usable" else "error",
+        )
+        return redirect(url_for("verify_result", verification_id=verification_id))
+
+    @app.get("/verify/<verification_id>")
+    def verify_result(verification_id: str):
+        result = verification.get_verification(verification_id)
+        if result is None:
+            abort(404)
+        return render_template(
+            "verification_detail.html",
+            result=result,
+            grouped=verification.issues_by_category(result["issues"]),
+            issue_labels=verification.ISSUE_LABELS,
+            stale=verification.is_stale(result),
+        )
 
     @app.errorhandler(413)
     def too_large(_err):

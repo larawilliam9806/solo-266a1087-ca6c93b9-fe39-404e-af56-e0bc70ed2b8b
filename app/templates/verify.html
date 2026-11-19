@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Study 影像完整性核查{% endblock %}
+{% block body %}
+<section class="card">
+  <h2 style="margin-top:0;">Study 影像完整性核查</h2>
+  <p class="muted">
+    选择匿名 Study 与匿名 PatientID，填写协议要求的 SOP Class UID 及每类最少实例数。
+    系统只统计<b>当前成功批次</b>中的去重实例；实例的 Study UID 与 PatientID
+    必须成对一致，同一 SOP 重复出现只计一次。全部类别满足才标为<b>可用</b>。
+    核查结果保存当时的发布快照，后续补传不影响已有结果，需重新核查才会纳入。
+  </p>
+
+  {% if studies %}
+  <form method="post" action="{{ url_for('verify_submit') }}">
+    <p>
+      <label for="study_pair"><b>Study / 匿名 PatientID</b></label><br>
+      <select id="study_pair" name="study_pair" required
+              style="min-width:520px;padding:7px;margin-top:6px;">
+        <option value="">— 请选择 —</option>
+        {% for s in studies %}
+          <option value="{{ s.study_uid }}|{{ s.patient_id }}"
+            {% if selected_study == s.study_uid ~ '|' ~ s.patient_id %}selected{% endif %}>
+            Study {{ s.study_uid }} ｜ 患者 {{ s.patient_id }}
+            （去重实例 {{ s.instances }}，成功批次 {{ s.batches }}）
+          </option>
+        {% endfor %}
+      </select>
+    </p>
+
+    <table style="margin-top:14px;">
+      <thead><tr>
+        <th style="width:70%;">SOP Class UID</th>
+        <th>最少实例数</th>
+      </tr></thead>
+      <tbody id="requirement-rows">
+      {% for row in requirements %}
+        <tr>
+          <td><input type="text" name="sop_class_uid" value="{{ row.sop_class_uid }}"
+                     placeholder="如 1.2.840.10008.5.1.4.1.1.2" required
+                     style="width:96%;padding:6px;"></td>
+          <td><input type="number" name="minimum_instances" min="1" step="1"
+                     value="{{ row.minimum }}" required style="width:110px;padding:6px;"></td>
+        </tr>
+      {% endfor %}
+      {% if not requirements %}
+        <tr>
+          <td><input type="text" name="sop_class_uid"
+                     placeholder="如 1.2.840.10008.5.1.4.1.1.2" required
+                     style="width:96%;padding:6px;"></td>
+          <td><input type="number" name="minimum_instances" min="1" step="1"
+                     value="1" required style="width:110px;padding:6px;"></td>
+        </tr>
+      {% endif %}
+      </tbody>
+    </table>
+    <p>
+      <button class="btn" type="button" onclick="addRequirementRow()"
+              style="background:#667085;">+ 增加一类</button>
+      <button class="btn" type="submit" style="margin-left:8px;">执行核查</button>
+    </p>
+    <p class="muted">
+      同一 SOP Class 出现多行时按其中最大的最少实例数计一次；
+      匿名 PatientID 用于校验实例归属，不一致的实例会被列为跨患者问题。
+    </p>
+  </form>
+  {% else %}
+    <p class="muted">当前没有成功批次中的可用 Study，请先上传并成功处理影像。</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2 style="margin-top:0;">最近核查记录</h2>
+  {% if verifications %}
+  <table>
+    <thead><tr>
+      <th>时间</th><th>Study UID</th><th>匿名 PatientID</th>
+      <th>结论</th><th>快照批次</th><th>操作</th>
+    </tr></thead>
+    <tbody>
+    {% for v in verifications %}
+      <tr>
+        <td>{{ v.created_at }}</td>
+        <td><code>{{ v.study_uid }}</code></td>
+        <td><code>{{ v.patient_id }}</code></td>
+        <td class="status-{{ 'ready' if v.status == 'usable' else 'failed' }}">
+          {{ '可用' if v.status == 'usable' else '不可用' }}
+        </td>
+        <td>{{ v.snapshot.ready_batches | length }} 个</td>
+        <td><a href="{{ url_for('verify_result', verification_id=v.id) }}">查看</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">尚无核查记录。</p>
+  {% endif %}
+</section>
+
+<script>
+  function addRequirementRow() {
+    const tbody = document.getElementById('requirement-rows');
+    const row = document.createElement('tr');
+    row.innerHTML =
+      '<td><input type="text" name="sop_class_uid" required ' +
+      'placeholder="如 1.2.840.10008.5.1.4.1.1.2" style="width:96%;padding:6px;"></td>' +
+      '<td><input type="number" name="minimum_instances" min="1" step="1" ' +
+      'value="1" required style="width:110px;padding:6px;"></td>';
+    tbody.appendChild(row);
+  }
+</script>
+{% endblock %}

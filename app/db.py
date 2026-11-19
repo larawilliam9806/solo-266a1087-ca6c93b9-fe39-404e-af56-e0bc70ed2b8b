@@ -53,11 +53,34 @@ CREATE TABLE IF NOT EXISTS batch_files (
     original_patient_id   TEXT NOT NULL DEFAULT '',
     original_study_uid    TEXT NOT NULL DEFAULT '',
     original_series_uid   TEXT NOT NULL DEFAULT '',
+    sop_class_uid         TEXT NOT NULL DEFAULT '',       -- 原 SOP Class UID
+    new_sop_uid           TEXT NOT NULL DEFAULT '',       -- 匿名化后的 SOP UID
+    new_patient_id        TEXT NOT NULL DEFAULT '',       -- 匿名化后的 PatientID
     PRIMARY KEY (batch_id, sop_uid)
 );
 
 CREATE INDEX IF NOT EXISTS idx_batch_files_sop ON batch_files(sop_uid);
 CREATE INDEX IF NOT EXISTS idx_instances_sha  ON instances(sha256);
+
+-- 完整性核查结果：每条记录固定保存核查当时的“发布快照”，
+-- 后续补传/新批次不会回写历史结果，只有重新核查才会生成新记录。
+CREATE TABLE IF NOT EXISTS study_verifications (
+    id                      TEXT PRIMARY KEY,
+    original_study_uid      TEXT NOT NULL,
+    study_uid               TEXT NOT NULL,              -- 匿名化后的 Study UID
+    expected_patient_ids    TEXT NOT NULL DEFAULT '[]', -- JSON 数组（匿名 PatientID）
+    status                  TEXT NOT NULL CHECK (status IN ('usable','unusable')),
+    requirements_json       TEXT NOT NULL,
+    class_results_json      TEXT NOT NULL,
+    issues_json             TEXT NOT NULL,
+    batch_ids_json          TEXT NOT NULL,              -- JSON 数组，快照所用成功批次
+    snapshot_json           TEXT NOT NULL,              -- JSON，发布快照（批次/zip 哈希等）
+    total_instances         INTEGER NOT NULL DEFAULT 0, -- 去重后的候选实例数
+    created_at              TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_verifications_study
+    ON study_verifications(original_study_uid);
 """
 
 
@@ -93,8 +116,26 @@ def init_db() -> None:
     conn = get_db()
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
     finally:
         conn.close()
+
+
+# 增量迁移：老数据库的 batch_files 没有核查所需的匿名字段
+_BATCH_FILES_NEW_COLUMNS = {
+    "sop_class_uid": "TEXT NOT NULL DEFAULT ''",
+    "new_sop_uid": "TEXT NOT NULL DEFAULT ''",
+    "new_patient_id": "TEXT NOT NULL DEFAULT ''",
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    existing = {
+        row["name"] for row in conn.execute("PRAGMA table_info(batch_files)")
+    }
+    for name, ddl in _BATCH_FILES_NEW_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE batch_files ADD COLUMN {name} {ddl}")
 
 
 def recover_interrupted_batches() -> list[str]:

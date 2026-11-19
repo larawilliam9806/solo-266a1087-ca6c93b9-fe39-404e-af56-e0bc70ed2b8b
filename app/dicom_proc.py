@@ -33,6 +33,7 @@ TAG_SERIES_UID = Tag(0x0020, 0x000E)
 TAG_SOP_UID = Tag(0x0008, 0x0018)
 TAG_PATIENT_ID = Tag(0x0010, 0x0020)
 TAG_PATIENT_NAME = Tag(0x0010, 0x0010)
+TAG_SOP_CLASS_UID = Tag(0x0008, 0x0016)
 
 # 非身份 UI 标签的角色提示（仅当值不在本批身份集合中时作为兜底）
 ROLE_HINT_TAGS: dict[Tag, str] = {
@@ -69,6 +70,7 @@ class PlannedFile:
     sop_uid: str
     patient_id: str
     ds: pydicom.Dataset
+    sop_class_uid: str = ""      # 原 SOP Class UID，供完整性核查按类别统计
     reused: bool = False          # 命中既有实例，直接复用对象存储文件
     object_relpath: str = ""
 
@@ -164,6 +166,10 @@ def plan_batch(tmp_files: list[tuple[str, Path]]) -> BatchPlan:
             series_uid = str(ds[TAG_SERIES_UID].value)
             sop_uid = str(ds[TAG_SOP_UID].value)
             patient_id = str(ds[TAG_PATIENT_ID].value) if TAG_PATIENT_ID in ds else ""
+            sop_class_uid = (
+                str(ds[TAG_SOP_CLASS_UID].value)
+                if TAG_SOP_CLASS_UID in ds else ""
+            )
 
             # 批内同 SOP 去重/冲突
             if sop_uid in seen_sop:
@@ -197,6 +203,7 @@ def plan_batch(tmp_files: list[tuple[str, Path]]) -> BatchPlan:
                 sop_uid=sop_uid,
                 patient_id=patient_id,
                 ds=ds,
+                sop_class_uid=sop_class_uid,
                 reused=reused,
                 object_relpath=object_relpath,
             )
@@ -363,10 +370,23 @@ def process_plan(plan: BatchPlan, batch_id: str) -> None:
                     )
                 conn.execute(
                     "INSERT OR IGNORE INTO batch_files(batch_id, sop_uid, orig_name, "
-                    "original_patient_id, original_study_uid, original_series_uid) "
-                    "VALUES(?,?,?,?,?,?)",
-                    (batch_id, pf.sop_uid, pf.orig_name,
-                     pf.patient_id, pf.study_uid, pf.series_uid),
+                    "original_patient_id, original_study_uid, original_series_uid, "
+                    "sop_class_uid, new_sop_uid, new_patient_id) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    (
+                        batch_id,
+                        pf.sop_uid,
+                        pf.orig_name,
+                        pf.patient_id,
+                        pf.study_uid,
+                        pf.series_uid,
+                        pf.sop_class_uid,
+                        plan.uid_remap[pf.sop_uid],
+                        plan.patient_remap.get(
+                            pf.patient_id,
+                            identifiers.derive_patient_id(pf.patient_id),
+                        ),
+                    ),
                 )
     finally:
         conn.close()

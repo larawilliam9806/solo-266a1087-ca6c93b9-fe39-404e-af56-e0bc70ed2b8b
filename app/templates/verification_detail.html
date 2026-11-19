@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}核查结果 {{ result.id }}{% endblock %}
+{% block body %}
+<section class="card">
+  <h2 style="margin-top:0;">核查结果</h2>
+  <p>
+    结论：
+    <span class="status-{{ 'ready' if result.status == 'usable' else 'failed' }}"
+          style="font-size:16px;">
+      {{ '可用（协议要求全部满足）' if result.status == 'usable' else '不可用（存在未满足项）' }}
+    </span>
+  </p>
+  <p>匿名 Study UID：<code>{{ result.study_uid }}</code></p>
+  <p>匿名 PatientID：<code>{{ result.patient_id }}</code></p>
+  <p>核查时间：{{ result.created_at }} ｜ 去重候选实例：{{ result.total_instances }}</p>
+
+  {% if stale %}
+  <div class="flash error">
+    该核查之后又有新的成功批次入库。本次结论只反映下方发布快照；
+    需要纳入新补传的实例，请返回核查页<b>重新核查</b>。
+  </div>
+  {% endif %}
+
+  <h3>SOP 类别统计</h3>
+  <table>
+    <thead><tr>
+      <th>SOP Class UID</th><th>要求最少实例数</th><th>符合的实例数</th><th>是否满足</th>
+    </tr></thead>
+    <tbody>
+    {% for c in result.class_results %}
+      <tr>
+        <td><code>{{ c.sop_class_uid }}</code></td>
+        <td>{{ c.required }}</td>
+        <td>{{ c.found }}</td>
+        <td class="status-{{ 'ready' if c.satisfied else 'failed' }}">
+          {{ '满足' if c.satisfied else '不满足' }}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">
+    仅统计匿名 Study 与匿名 PatientID 成对一致、文件存在且解析成功的去重实例；
+    同一原 SOPInstanceUID 在多个成功批次中只计一次。
+  </p>
+
+  <h3>未满足项分类汇总</h3>
+  <table>
+    <thead><tr>
+      <th>类别</th><th>数量</th><th>说明</th>
+    </tr></thead>
+    <tbody>
+      <tr><td>缺少类别</td><td>{{ grouped['missing_class'] | length }}</td><td>一条要求类别都没有符合的实例</td></tr>
+      <tr><td>数量不足</td><td>{{ grouped['insufficient'] | length }}</td><td>该类别有实例但少于最少实例数</td></tr>
+      <tr><td>跨患者</td><td>{{ grouped['cross_patient'] | length }}</td><td>Study 一致但匿名 PatientID 与所选患者不一致</td></tr>
+      <tr><td>文件缺失</td><td>{{ grouped['missing_file'] | length }}</td><td>对象存储中没有处理结果文件</td></tr>
+      <tr><td>解析失败</td><td>{{ grouped['parse_failed'] | length }}</td><td>处理结果无法解析或身份与登记不一致</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2 style="margin-top:0;">未满足项明细</h2>
+  {% if result.issues %}
+    {% for key, label in issue_labels.items() %}
+      {% if grouped.get(key) %}
+      <h3 style="margin-bottom:6px;">{{ label }}（{{ grouped[key] | length }}）</h3>
+      <table style="margin-bottom:18px;">
+        {% if key in ('missing_class', 'insufficient') %}
+        <thead><tr>
+          <th>SOP Class UID</th><th>要求</th><th>实际符合</th>
+        </tr></thead>
+        <tbody>
+        {% for issue in grouped[key] %}
+          <tr>
+            <td><code>{{ issue.sop_class_uid }}</code></td>
+            <td>{{ issue.required }}</td>
+            <td>{{ issue.found }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+        {% else %}
+        <thead><tr>
+          <th>原 SOP UID</th><th>原文件名</th><th>所属批次</th><th>说明</th>
+        </tr></thead>
+        <tbody>
+        {% for issue in grouped[key] %}
+          <tr>
+            <td><code>{{ issue.sop_uid }}</code></td>
+            <td>{{ issue.orig_name or '—' }}</td>
+            <td>{% for b in issue.batch_ids %}<code>{{ b }}</code>{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+            <td>{{ issue.message }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+        {% endif %}
+      </table>
+      {% endif %}
+    {% endfor %}
+  {% else %}
+    <p class="status-ready">没有发现缺失类别、数量不足、跨患者、文件缺失或解析失败。</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2 style="margin-top:0;">本次核查所用发布快照</h2>
+  <p>快照时间：{{ result.snapshot.captured_at }} ｜ 实例集合摘要：
+    <code>{{ result.snapshot.instance_digest[:16] }}…</code></p>
+  <p class="muted">
+    核查结果写入即固定，补传或新批次不会改写历史记录，也不会让旧结论自动变为可用。
+  </p>
+  {% if result.snapshot.ready_batches %}
+  <table>
+    <thead><tr>
+      <th>批次 ID</th><th>完成时间</th><th>zip 文件</th><th>zip 大小（字节）</th><th>上传文件数</th>
+    </tr></thead>
+    <tbody>
+    {% for b in result.snapshot.ready_batches %}
+      <tr>
+        <td><a href="{{ url_for('batch_detail', batch_id=b.id) }}"><code>{{ b.id }}</code></a></td>
+        <td>{{ b.finished_at or '—' }}</td>
+        <td>{{ b.zip_name or '—' }}</td>
+        <td>{{ b.zip_size if b.zip_size is not none else '—' }}</td>
+        <td>{{ b.original_count }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">快照中没有成功批次。</p>
+  {% endif %}
+</section>
+
+<p><a class="btn" href="{{ url_for('verify_page') }}">← 返回核查页</a></p>
+{% endblock %}

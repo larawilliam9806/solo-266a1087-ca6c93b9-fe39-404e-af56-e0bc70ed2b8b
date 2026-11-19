@@ -17,6 +17,9 @@ DEFAULT_UID_PREFIX = "1.2.826.0.1.3680043.10.9999"
 # SQLite 写锁等待（毫秒），配合 WAL 支持多 worker 并发上传
 SQLITE_BUSY_TIMEOUT_MS = int(os.environ.get("SQLITE_BUSY_TIMEOUT_MS", "30000"))
 
+# 单次完整性核查最多扫描的去重实例数（防止超大 Study 长时间占用 worker）
+VERIFY_MAX_INSTANCES = int(os.environ.get("DICOM_VERIFY_MAX_INSTANCES", "20000"))
+
 
 class _Paths:
     """延迟解析的数据目录视图，每次属性访问都反映当前环境变量。"""
